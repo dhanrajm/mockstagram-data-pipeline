@@ -1,0 +1,17 @@
+{
+  "name": "typescript-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "yarn workspaces run build",
+    "dev": "yarn workspaces run dev",
+    "start": "yarn workspaces run start",
+    "init-db": "node scripts/init-db.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,23 @@
+# Dependency & build artifacts
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+
+# Git
+.git
+.gitignore
+
+# Env & logs
+.env
+*.log
+
+# System/editor files
+.DS_Store
+*.swp
+
+# Monorepo tools (optional)
+.turbo
+.nx
+.pnpm-store

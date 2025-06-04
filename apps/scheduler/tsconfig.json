@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "baseUrl": ".",
+    "paths": {
+      "@monorepo/shared-utils": ["../../packages/shared-utils/dist"]
+    },
+    "types": ["node"]
+  },
+  "include": ["src/**/*"]
+} 
