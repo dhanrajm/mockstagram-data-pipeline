@@ -51,6 +51,16 @@ The system includes the following components:
 - Yarn
 - Docker and Docker Compose
 
+## Test Coverage
+
+**Note**: This project currently include test case for only result-handler. The following areas would benefit from test coverage:
+
+- Unit tests for individual service components
+- Integration tests for service interactions
+- End-to-end tests for the complete data pipeline
+- Performance tests for batch processing
+- Error handling and recovery scenarios
+- Database operations and data consistency
 
 ## Service Details
 
@@ -107,7 +117,6 @@ For local development with docker
    ```bash
    docker-compose up
    ```
-
 
 ## Monitoring and Observability
 

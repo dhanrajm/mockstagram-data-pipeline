@@ -19,6 +19,12 @@ const FETCHER_RESULT_TOPIC = process.env.FETCHER_RESULT_TOPIC || "fetcher_result
 const RESULT_HANDLER_DLQ_TOPIC = process.env.RESULT_HANDLER_DLQ_TOPIC || "result_handler_dlq";
 const SERVICE_NAME = process.env.SERVICE_NAME || "result-handler";
 const SERVICE_VERSION = process.env.SERVICE_VERSION || "1.0.0";
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "100", 10);
+const BATCH_TIMEOUT_MS = parseInt(process.env.BATCH_TIMEOUT_MS || "1000", 10);
+
+// Buffer for database operations
+let dbBuffer: FetcherResult[] = [];
+let batchTimeout: NodeJS.Timeout | null = null;
 
 async function start() {
   try {
@@ -42,10 +48,18 @@ async function start() {
     // Subscribe to Kafka topic
     await consumer.subscribe({ topic: FETCHER_RESULT_TOPIC });
 
-    // Set up message processing
     await consumer.run({
       eachMessage: async ({ message }: { message: KafkaMessage }) => {
         if (!message.value) return;
+
+        // Log the raw message for recovery purposes
+        logger.info({ 
+          messageKey: message.key?.toString(),
+          messageValue: message.value.toString(),
+          messageTimestamp: message.timestamp,
+          messageOffset: message.offset
+        }, "Received Kafka message");
+
         logMetric(metrics, {
           type: "increment",
           metric: "messagesConsumedCounter",
@@ -56,7 +70,22 @@ async function start() {
           if (!result) {
             throw new Error("Parsed result is null or undefined");
           }
-          await handleResult(result, pool, metrics);
+          
+          // Add to buffer
+          dbBuffer.push(result);
+          
+          // Process batch if buffer is full
+          if (dbBuffer.length >= BATCH_SIZE) {
+            await processBatch(pool, metrics, producer);
+          } else if (!batchTimeout) {
+            // Set timeout for processing remaining items
+            batchTimeout = setTimeout(async () => {
+              if (dbBuffer.length > 0) {
+                await processBatch(pool, metrics, producer);
+              }
+              batchTimeout = null;
+            }, BATCH_TIMEOUT_MS);
+          }
         } catch (error) {
           await handleError(error, message, producer, metrics);
         }
@@ -71,57 +100,59 @@ async function start() {
   }
 }
 
-async function handleResult(
-  result: FetcherResult,
-  pool: Pool,
-  metrics: Metrics | undefined
-) {
-  logger.info({ result }, "Handling result");
+async function processBatch(pool: Pool, metrics: Metrics | undefined, producer: Producer) {
+  if (dbBuffer.length === 0) return;
+
+  const batch = [...dbBuffer];
+  dbBuffer = [];
+  
+  if (batchTimeout) {
+    clearTimeout(batchTimeout);
+    batchTimeout = null;
+  }
+
+  logger.info({ batchSize: batch.length }, "Processing database batch");
   const start = Date.now();
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // Upsert into influencer_summary
-    await client.query(
-      `INSERT INTO influencer_summary (
+    // Prepare the batch insert values with direct values
+    const influencerValues = batch.map(result => 
+      `(${result.pk}, '${result.username}', ${result.followerCount}, ${result.followerCount}, 1, '${result.fetchTimestamp}')`
+    ).join(',');
+
+    // First update influencer_summary
+    await client.query(`
+      INSERT INTO influencer_summary (
         pk,
         username,
         current_follower_count,
         total_follower_sum,
         readings_count,
         last_updated
-      ) VALUES (
-        $1,
-        $2,
-        $3,
-        $3,
-        1,
-        $4
-      )
+      ) VALUES ${influencerValues}
       ON CONFLICT (pk) DO UPDATE SET
         username = EXCLUDED.username,
         current_follower_count = EXCLUDED.current_follower_count,
         total_follower_sum = influencer_summary.total_follower_sum + EXCLUDED.current_follower_count,
         readings_count = influencer_summary.readings_count + 1,
-        last_updated = EXCLUDED.last_updated`,
-      [result.pk, result.username, result.followerCount, result.fetchTimestamp]
-    );
+        last_updated = EXCLUDED.last_updated
+    `);
 
-    // Insert into follower_timeline
-    await client.query(
-      `INSERT INTO follower_timeline (
+    // Then insert into follower_timeline
+    const timelineValues = batch.map(result => 
+      `(${result.pk}, '${result.fetchTimestamp}', ${result.followerCount})`
+    ).join(',');
+
+    await client.query(`
+      INSERT INTO follower_timeline (
         pk,
         timestamp,
         follower_count
-      ) VALUES (
-        $1,
-        $2,
-        $3
-      )`,
-      [result.pk, result.fetchTimestamp, result.followerCount]
-    );
+      ) VALUES ${timelineValues}
+    `);
 
     await client.query("COMMIT");
     logMetric(metrics, { type: "increment", metric: "dbOperationsCounter" });
@@ -134,6 +165,45 @@ async function handleResult(
     });
   } catch (error) {
     await client.query("ROLLBACK");
+    
+    // Log the failed batch
+    logger.error({ 
+      error, 
+      batchSize: batch.length,
+      batchItems: batch.map(item => ({
+        pk: item.pk,
+        username: item.username,
+        followerCount: item.followerCount,
+        fetchTimestamp: item.fetchTimestamp
+      }))
+    }, "Batch processing failed");
+
+    // Increment batch failure metric
+    logMetric(metrics, { type: "increment", metric: "batchProcessingFailureCounter" });
+
+    // Send failed items to DLQ
+    const failed: FailedDbOperation = {
+      pk: -1, // Using -1 to indicate batch failure
+      error: error instanceof Error ? error.message : "Unknown error",
+      data: JSON.stringify({
+        batchSize: batch.length,
+        items: batch,
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString()
+      })
+    };
+
+    await producer.send({
+      topic: RESULT_HANDLER_DLQ_TOPIC,
+      messages: [
+        {
+          key: String(failed.pk),
+          value: JSON.stringify(failed),
+        },
+      ],
+    });
+    logMetric(metrics, { type: "increment", metric: "messagesProducedCounter" });
+
     throw error;
   } finally {
     client.release();

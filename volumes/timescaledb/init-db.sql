@@ -31,7 +31,3 @@ CREATE INDEX IF NOT EXISTS idx_follower_timeline_pk_timestamp
 
 CREATE INDEX IF NOT EXISTS idx_follower_timeline_timestamp 
     ON follower_timeline (timestamp DESC);
-
-
--- Set up retention policies
-SELECT add_retention_policy('follower_timeline', INTERVAL '90 days');

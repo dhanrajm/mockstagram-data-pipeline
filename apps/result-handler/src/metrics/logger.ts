@@ -2,7 +2,14 @@ import { Metrics } from "./index";
 
 type MetricAction = {
   type: 'increment' | 'observe';
-  metric: keyof Pick<Metrics, 'messagesConsumedCounter' | 'dbOperationsCounter' | 'dbOperationDurationHistogram' | 'messagesProducedCounter' | 'failedDbOpsCounter'>;
+  metric: keyof Pick<Metrics, 
+    'messagesConsumedCounter' | 
+    'dbOperationsCounter' | 
+    'dbOperationDurationHistogram' | 
+    'messagesProducedCounter' | 
+    'failedDbOpsCounter' |
+    'batchProcessingFailureCounter'
+  >;
   value?: number;
 };
 

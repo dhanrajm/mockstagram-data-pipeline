@@ -6,6 +6,7 @@ export interface Metrics {
   dbOperationDurationHistogram: Histogram;
   messagesProducedCounter: Counter;
   failedDbOpsCounter: Counter;
+  batchProcessingFailureCounter: Counter;
   metrics: () => Promise<string>;
 }
 
@@ -50,12 +51,19 @@ export async function initializeMetrics(
     registers: [registry],
   });
 
+  const batchProcessingFailureCounter = new Counter({
+    name: "result_handler_batch_processing_failures_total",
+    help: "Total number of batch processing failures",
+    registers: [registry],
+  });
+
   return {
     messagesConsumedCounter,
     dbOperationsCounter,
     dbOperationDurationHistogram,
     messagesProducedCounter,
     failedDbOpsCounter,
+    batchProcessingFailureCounter,
     metrics: () => registry.metrics(),
   };
 }
