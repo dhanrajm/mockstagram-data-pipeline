@@ -5,6 +5,10 @@ import { Metrics } from "../metrics/index";
 import { logMetric } from "../metrics/logger";
 import { INFLUENCER_FETCH_TASKS_TOPIC } from "../kafka/client";
 
+const BATCH_SIZE = parseInt(
+  process.env.INFLUENCER_FETCH_TASKS_TOPIC_BATCH_SIZE || "100"
+); // Maximum number of tasks per batch
+
 export interface SchedulerTick {
   (activeInfluencers: Map<number, ActiveInfluencer>): Promise<void>;
 }
@@ -39,34 +43,48 @@ function createSchedulerTick(
     }
 
     if (tasks.length > 0) {
-      logger.info({ count: tasks.length }, "Producing fetch tasks");
-      try {
-        await producer.send({
-          topic: INFLUENCER_FETCH_TASKS_TOPIC,
-          messages: tasks.map((task) => ({
-            key: task.pk.toString(),
-            value: JSON.stringify(task),
-          })),
-        });
+      logger.info({ count: tasks.length }, "Producing fetch tasks in batches");
 
-        logMetric(metrics, {
-          type: "increment",
-          metric: "tasksProducedCounter",
-        });
+      // Split tasks into batches
+      for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+        const batch = tasks.slice(i, i + BATCH_SIZE);
+        try {
+          await producer.send({
+            topic: INFLUENCER_FETCH_TASKS_TOPIC,
+            messages: batch.map((task) => ({
+              key: task.pk.toString(),
+              value: JSON.stringify(task),
+            })),
+          });
 
-        logger.info(
-          { count: tasks.length },
-          "Successfully produced fetch tasks"
-        );
-      } catch (error) {
-        logger.error(
-          { error, count: tasks.length },
-          "Failed to produce fetch tasks"
-        );
-        logMetric(metrics, {
-          type: "increment",
-          metric: "tasksFailedCounter",
-        });
+          logMetric(metrics, {
+            type: "increment",
+            metric: "tasksProducedCounter",
+            value: batch.length,
+          });
+
+          logger.info(
+            {
+              batchSize: batch.length,
+              batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+            },
+            "Successfully produced batch of fetch tasks"
+          );
+        } catch (error) {
+          logger.error(
+            {
+              error,
+              batchSize: batch.length,
+              batchNumber: Math.floor(i / BATCH_SIZE) + 1,
+            },
+            "Failed to produce batch of fetch tasks"
+          );
+          logMetric(metrics, {
+            type: "increment",
+            metric: "tasksFailedCounter",
+            value: batch.length,
+          });
+        }
       }
     } else {
       logger.info("No tasks to produce in this tick");
