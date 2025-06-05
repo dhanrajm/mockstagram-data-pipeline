@@ -83,7 +83,7 @@ The system includes the following components:
 
 ## Development
 
-For local development without Docker:
+### For local development without Docker:
 
 1. Install dependencies:
    ```bash
@@ -112,11 +112,18 @@ For local development without Docker:
    yarn workspace @monorepo/result-handler start
    ```
 
-For local development with docker
+### For local development with docker
 1. Start the entire stack using Docker Compose:
    ```bash
    docker-compose up
    ```
+
+### Test
+1. Initialze the database using `node script/init-db.js`
+
+2. Run the `mockstagram-api-master` api server
+
+3. Populate the active influencers by running `node script/registry-writer.js`. This script iterates from 1000000 to 1999999, pushes these keys to the active influencer topic to trigger the processing pipeline.
 
 ## Monitoring and Observability
 
